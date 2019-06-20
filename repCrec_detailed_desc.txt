@@ -1,0 +1,326 @@
+Amery Chang
+ac3241@nyu.edu
+12/7/2018
+
+Detailed description of high-level design document
+
+(Please refer to the "repCrec.png" file for the design graph)
+
+Round boxes indicate classes (and the driver method), while rectangles indicate important data structures within these classes. Arrows indicate "has-a" or "implements" relationships, while dotted lines indicate inheritance. 
+
+Each class' major functions are listed (not including most getters/setters for the sake of brevity.
+
+
+******************** Driver ********************
+
+The driver's primary task is to read and parse input and to coordinate requests between the two major subsystems, the Site Manager (SM) and the Transaction Manager (TM).
+
+The driver also maintains a global timer.
+
+It will read input in an ad-hoc fashion (a while loop) until it reaches the end of the input file.
+
+It will also produce output to indicate status updates of Transactions (aborts and commits).
+
+// Drives parsing the input into operations, and runs until all operations are run
+int main()
+
+// Parses input file
+void parseOperationString()
+
+// Runs tasks b/w SM and TM for begin operation
+void beginTransaction()
+
+// Runs tasks b/w SM and TM for beginRO operation
+// When a RO operation begins, the transaction will collect the value of every data item into a hash map called 		// readOnlyData. This way, the transaction will only read the values of data at its start time stamp.
+void beginReadOnlyTransaction()
+
+// Runs tasks b/w SM and TM for end operation, resulting in a Commit or Abort 
+void endTransaction()
+
+// Runs tasks b/w SM and TM for read operation
+// Will check for locks and delay transaction if data item is locked
+int executeRead()
+
+// Runs tasks b/w SM and TM for write operation
+// Will check for locks and delay transaction if data item is locked
+void executeWrite()
+
+// Runs tasks b/w SM and TM for fail operation
+void executeFail()
+
+// Runs tasks b/w SM and TM for recover operation
+void executeRecover()
+
+
+******************** Data ********************
+
+Data items are the variables that operations read from and write to. There are 20 total data variables, "X1", ..., "X20", distributed about 10 sites.
+
+If the Data item has an odd index, it will only be at one site, Site 1 + ( index % 10), e.g. X3 is at Site { 1 + (3 % 10) } = 4. If the Data item has an even index, it will be distributed to every site.
+
+Copies of data have a name with a dot, e.g. X6.2 refers to the second copy of X6 at Site 2. These are indicated by a Data item's "fullName" field.
+
+There are 20 Data items in the database system, distributed about 10 sites.
+
+Data are initialized at the start of main to INT_MIN.
+
+
+// Constructor
+Data(string name, bool readLocked = false, bool writeLocked = false, 
+	bool deployAll = false, bool isReplicated = false, 
+	string lockingTransaction = "")
+
+// Accessors
+string getName()	
+string getFullName()					// Returns the name with site suffix, e.g. "X2.5"
+int getValue()
+int getLastCommittedValue()			// Returns value from last committed transaction, otherwise INT_MIN
+bool isAnyLocked()					// Returns true if Data is read locked or write locked
+bool isReadLocked()
+bool isWriteLocked()
+bool isDeployAll()					// Returns true if Data has even index, meaning it has a copy at all sites
+string getLockingTransaction			// Returns name of transaction that holds a lock on Data, otherwise ""
+bool getIsReplicated					// Returns true if Data has just recovered, i.e. it is replicated
+										// A replicated variable can't be read from until it's written to
+vector<string>* getTransactionsWritingToData()		// Returns vector of transaction names that have written to Data
+
+// Mutators
+void modifyName(string name)
+void giveFullName(int siteNumber)					// Assigns full name to Data
+void setValue(int value)
+void updateLastCommittedValue(string transactionName)	// Updates Data's last committed value
+void revertToLastCommittedValue()					// Set Data's value to last committed value
+void setToReadLocked()
+void setToWriteLocked()
+void promoteLockStatus()							// Promotes Data from read locked to write locked
+void setToUnlocked()
+void setIsReplicated()							// Set Data flag isReplicated to true
+
+Data* replicate()								// Create replicated of data item
+
+
+******************** Operation ********************
+
+The operators (and their arguments) are: Read(T_n, X), Write(T_n, X, k), Begin(T_n), BeginRO(T_n), Dump(Site), Dump(X), End(T_n), Fail(Site), Recover(Sites).
+
+An enum Operator {R = 0, W = 1, begin, beginRO, end, dump, fail, recover} is used to recognize operators.
+
+The Fail, and Recover operator will trigger a method within the Site Manager.
+
+The End operation can result in a "Commit" case and an "Abort" case. Transactions will have a Status field to indicate the results of a Transaction issuing an End operation.
+
+Operations will be imported into the system as strings and presented to subsystems via enumerations. 
+
+
+// Constructor
+// The constructor is overloaded to allow for different types of operations to 
+Operation(Operator op)													// dump
+Operation(Operator op, string transactionName)									// begin, beginRO, end
+Operation(Operator op, string transactionName, string dataName)					// R
+Operation(Operator op, string transactionName, string dataName, int writeValue)		// W
+Operation(Operator op, int siteIndex)										// recover, fail
+
+
+// Accessors
+Operator getOperator()				
+int getDataIndex()				// Returns the index of dataName for R and W operations
+string getTransactionName()		// Returns transactionName for begin, beginRO, end, R, and W operations
+string getDataName() 			// Returns name of Data item for R and W operations
+int getWriteValue()				// Returns writeValue for W operations
+int getSiteIndex()				// Returns Site index for recover and fail operations
+
+
+******************** Transaction ********************
+
+A Transaction also has a transactionStatus indicating whether it is Created, Running, Waiting, Committed, or Aborted, which are encoded as enums.
+
+There are two types of transactions differentiated by a bool: Read-Only transactions, and regular (Read-Write) transactions. 
+
+Each transaction is created with a begin operation and may end with an end operation, though it may also be aborted either due to site failure or deadlock.
+
+// Constructor
+Transaction(string name, int startTime, bool isReadOnly = false, transactionStatus ts = Created)
+
+// Accessors
+string getTransactionName()
+int getTransactionStartTime()
+int getTransactionEndTime()
+bool getIsReadOnly()
+transactionStatus getTransactionStatus()
+int getNumOfWaitingOperations()					// Returns number of operations waiting 
+
+// Mutators
+void setTransactionStatus(transactionStatus ts)
+void setTransactionStartTime(int startTime)
+void setTransactionEndTime(int endTime)
+void addOperationToPending(Operation* op)			// Add operation to waiting queue
+void addToWriteSet(Data* d)			
+void removeFromPending(Operation* op)			// Remove operation from waiting queue
+
+
+******************** Transaction Manager ********************
+
+The Transaction Manager (TM) keeps track of the transaction and manages the its status throughout its run. It also handles rollbacks in the case of deadlocks. 
+
+// Accessors
+int getNumOfTransaction()
+int getNumOfWaitingOperations()						// Returns number of operations waiting due to locks
+transactionStatus getTransactionStatus(string transactionName)
+Operation* getFirstWaitingOperation()				// Returns first operation waiting for its data item to 													//unlock
+vector<Operation*>* getOperationsWaitList()			// Returns the operations waiting
+Transaction* findTransaction(string transactionName)	// Returns a transaction held by TM
+bool isTransactionWaiting(string transactionName)	
+bool detectDeadlock()							// Returns true if deadlock is detected	
+string detectYoungestInDeadlock()					// If deadlock, returns youngest transaction
+
+// Mutators
+void setTransactionStatus(string transactionName, transactionStatus ts)
+void addTransaction(Transaction* t)					// Adds transaction to TM
+void addWaitsForRelationship(string t1, string t2)		// Adds a pair <string,string> indicating that string 1 is 
+												// waiting on string 2
+void addOperationToWaitList(Operation* op, string lockingTransaction)
+void clearOpsWaitList()
+
+// Creates a transaction
+void begin(string transactionName, int startTime, Operation* op)	
+
+// Creates a RO transaction
+void beginRO(string transactionName, int startTime, Operation* op)
+
+// Ends a transaction by aborting or committing it
+void end(string transactionName, int endTime, Operation* op)
+
+// Implements read operation from Transaction perspective
+int transactionIssuesRead(Operation* op, Data* d)
+
+// Implements write operation from Transaction perspective
+void transactionIssuesWrite(Operation* op, Data* d)
+
+// Sets transaction status to Commit
+void commitTransaction(string transactionName)
+
+// Sets transaction status to abort
+// Deletes waits for relationships involving this transaction
+// Removes waiting operations from this transaction
+void abortTransaction(string transactionName)
+
+
+******************** Lock ********************
+
+A lock restricts an operation's permission to either read or write a Data item until the lock is released. 
+
+Locks can either be Read Locks (RL) also known as "Shared" locks, or Write Locks (WL) also known as "Exclusive" locks. Each Lock will have a field indicating its type.
+
+// Constructor
+Lock(Data x, Transaction t, LockType type)
+
+// Accessors 
+Data* getData()
+LockType getLockType()
+string getRequestor()
+
+// Mutators
+void promoteLock()				// Promotes RO lock to RW lock
+
+
+******************** Site ********************
+
+A site can be in NORMAL, FAIL, or RECOVERING states.
+
+// Constructor
+Site(int siteIndex, siteStatus status = Normal)
+
+// Accessors
+string getSiteName()
+int getSiteIndex()
+siteStatus getSiteStatus()
+int getNumOfDataItems()
+int getNumOfLocks()
+Data* getDataItem(string dataName)				// Returns data item on site
+int getValueOfDataOnSite(string dataName)			// Gets value of data item on site
+Lock* findLock(string dataName)
+bool isReadLockOnData(string dataName)
+bool isWriteLockOnData(string dataName)
+set<string>* getTransactionsWrittenToSite()		// Returns set of transactionNames written to site
+
+// Mutators
+void setSiteStatus(siteStatus status)
+void addDataToSite(Data* d)
+void removeDataFromSite(string dataName)
+void writeToDataOnSite(string dataName, string transactionName, int value)		// Sets write value to Data item
+
+// Returns cout statements indicating data values and site status
+void dump()								
+
+// Method to issue lock on a data item
+void issueLock(string transactionName, string dataName, LockType lType)
+
+// Method to issue an unlock on a data item
+void issueUnlock(string dataName)
+
+// Promotes lock
+void issuePromoteLock(string dataName)
+
+// Fail method
+	// Clears lock set
+	// Sets site status to fail
+void fail()
+
+// Updates Data item's last committed value
+void updateDataLastCommittedValues(string transactionName)
+
+// Reverts Data item to its last committed value
+void revertDataToLastCommitted(string dataname)
+
+// Recovery method
+	// Sets site status to recovering and then Normal
+	// Sets data items to isReplicated
+void recover()
+
+
+******************** Site Manager ********************
+
+The Site Manager (SM) initializes all sites and the Data items in them.
+
+// Factory method
+initializeSites()
+
+// Accessors
+int getNumOfSites()
+Site* getSiteByIndex(int i)
+bool allSitesNormal()			// Returns true if all sites are in Normal state
+
+// Mutators
+void issueLockOnAllSites(string dataName, string transactionName, LockType lType)
+void issueUnlockOnAllSites(string dataName)
+void issuePromoteLockOnAllSites(string dataName)
+void addSite(int i, Site* s)
+
+// Method to access available copy of data
+	// This will return data as long as it's not replicated
+Data* getReadableDataItem(int dataIndex, string dataName)
+
+// Writes to all sites that have the Data item
+void writeToAllSites(int dataIndex, string dataName, string transactionName, int value)
+
+// Returns hash map of read only copies for RO transactions
+unordered_map<string,int> getReadOnlyCopies()
+
+// Performs dump() function at all sites
+void dumpAllSites()
+
+// Fail a site
+void fail(int i)
+
+// Recover a site
+void recover(int i)
+
+// For data at all sites, update last committed 
+void updateDataAtAllSitesLastCommitted(string transactionName)
+
+// For data at all sites, revert values to last committed
+void revertDataAtAllSitesToLastCommitted(string dataname)
+
+
+
+
